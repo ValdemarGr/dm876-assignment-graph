@@ -21,10 +21,13 @@
     "svg-inline-loader": "^0.8.2",
     "typescript": "~3.7.2",
     "webpack-manifest-plugin": "^2.2.0",
-    "d3": "^5.7.2"
+    "d3": "^5.7.2",
+    "csv-parse": "^4.8.8",
+    "@types/csv-parse": "^1.2.2",
+    "axios": "^0.19.2"
   },
   "scripts": {
-    "start": "webpack-dev-server -w --mode development",
+    "start": "webpack-dev-server -w --hot --mode development",
     "build": "webpack --mode production",
     "build-dev": "webpack --mode development"
   },

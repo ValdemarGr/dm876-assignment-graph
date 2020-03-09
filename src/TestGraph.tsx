@@ -1,6 +1,5 @@
 import * as React from 'react';
 import * as d3 from 'd3';
-import getPrototypeOf = Reflect.getPrototypeOf;
 
 export default class TestGraph extends React.Component {
     constructor(props: any) {
@@ -30,7 +29,7 @@ export default class TestGraph extends React.Component {
                 },
                 sink: {
                     x: 500,
-                    y: 500
+                    y: 300
                 }
             }
         ];

@@ -1,7 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom';
-import TestGraph, {LinesC} from "./TestGraph";
+import {GraphC} from "./GraphC";
 
-ReactDOM.render(<TestGraph/>, document.getElementById('root'));
-
+ReactDOM.render(<GraphC/>, document.getElementById('root'));
 
