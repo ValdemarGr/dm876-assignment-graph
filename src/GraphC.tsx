@@ -4,6 +4,7 @@ import csv from 'csv-parse';
 import axios from 'axios';
 import * as d3 from "d3";
 import {LinesC} from "./TestGraph";
+import {SimulationNodeDatum, SimulationLinkDatum} from "d3-force";
 
 interface State {
     nodes: CsvNode[],
@@ -80,41 +81,24 @@ export class GraphC extends React.Component<{}, State> {
         const nodes: CsvNode[] = await this.getNodes();
         const links: CsvLink[] = await this.getLinks();
 
-        interface NodeDraw {
-            x: number,
-            y: number
+        interface DescriptiveNode extends SimulationNodeDatum {
+            id: string
         }
 
-        interface LineDraw {
-            x1: number,
-            y1: number,
-            x2: number,
-            y2: number
-        }
-
-        const d3Nodes = nodes.map((value, index) => {
+        const d3Nodes: DescriptiveNode[] = nodes.map((value, index) => {
           const x = value.id.substr(1);
           const asInt: number = +x;
-          const asNd: NodeDraw = {
+
+          const asSimNode: DescriptiveNode = {
+              id: value.id,
               x: asInt * 0.8 + 100 / 2,
               y: index * 2 + 2 + 100 / 2
           };
 
-          const n = d3.select(this.ref)
-              .append("circle")
-              .attr("r", value.children * 0.5)
-              .attr("fill", "blue")
-              .data([asNd])
-              .attr("cx", v => v.x)
-              .attr("cy", v => v.y);
-
-          n.append("title")
-            .text(value.name);
-
-          return n;
+          return asSimNode;
         });
 
-        const d3Links = links.map((value) => {
+        const d3Links: SimulationLinkDatum<DescriptiveNode>[] = links.flatMap((value) => {
             const source: CsvNode | undefined = nodes.find((node) => node.id == value.source);
             const sink: CsvNode | undefined = nodes.find((node) => node.id == value.sink);
 
@@ -128,34 +112,75 @@ export class GraphC extends React.Component<{}, State> {
                 const sourceX = +(source.id.substr(1)) * 0.8 + 100 / 2;
                 const sinkX = +(sink.id.substr(1)) * 0.8 + 100 / 2;
 
-                const asLine: string | null = d3.line()([
-                    [sourceX, sourceY],
-                    [sinkX, sinkY]
-                ]) as string;
-
-                const asLD: LineDraw = {
-                  x1: sourceX,
-                  y1: sourceY,
-                  x2: sinkX,
-                  y2: sinkY
+                const sourceAsSimNode: DescriptiveNode = {
+                    id: source.id,
+                    x: sourceX,
+                    y: sourceY
                 };
 
-                return d3.select(this.ref)
-                    .append("path")
-                    .attr("stroke", "black")
-                    .data([asLD])
-                    .attr("d", d => d3.line()([[d.x1, d.y1], [d.x2, d.y2]]));
-                    //.attr("d", asLine)
+                const sinkAsSimNode: DescriptiveNode = {
+                    id: sink.id,
+                    x: sinkX,
+                    y: sinkY
+                };
+
+                const asSimTuple: SimulationLinkDatum<DescriptiveNode> = {
+                    source: sourceAsSimNode,
+                    target: sinkAsSimNode
+                };
+
+                const o: SimulationLinkDatum<DescriptiveNode> = {
+                    source: source.id,
+                    target: sink.id
+                };
+
+                return Array.of<SimulationLinkDatum<DescriptiveNode>>(o);
+            } else {
+                return Array.of<SimulationLinkDatum<DescriptiveNode>>();
             }
         });
 
+        const ns = d3.select(this.ref)
+            .append("g")
+            .attr("class", "nodes")
+            .selectAll("circle")
+            .data(d3Nodes)
+            .enter()
+            .append("circle")
+            .attr("r", 5)
+            .attr("fill", "blue");
+
+        const ls =  d3.select(this.ref)
+            .append("g")
+            .attr("class", "links")
+            .selectAll("line")
+            .data(d3Links)
+            .enter().append("line")
+            .attr("stroke-width", 2)
+            .attr("stroke", "black");
+
+        const linkForce = d3.forceLink(d3Links)
+            .id((n) => {
+                return (n as {id : string}).id;
+            });
 
         const sim = d3.forceSimulation()
-            .force("link", d3.forceLink());
-
-        sim
+            .nodes(d3Nodes)
             .force("charge_force", d3.forceManyBody())
-            .force("center_force", d3.forceCenter(1800 / 2, 1800 / 2));
+            .force("center_force", d3.forceCenter(1800 / 2, 1800 / 2))
+            .force("links", linkForce)
+            .on("tick", () => {
+                ns
+                    .attr("cx", d => d.x as number)
+                    .attr("cy", d => d.y as number);
+
+                ls
+                    .attr("x1", d => (d.source as SimulationNodeDatum).x as number)
+                    .attr("y1", d => (d.source as SimulationNodeDatum).y as number)
+                    .attr("x2", d => (d.target as SimulationNodeDatum).x as number)
+                    .attr("y2", d => (d.target as SimulationNodeDatum).y as number);
+            });
+
 
 
     }
