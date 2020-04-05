@@ -3,12 +3,16 @@ import {CsvLink, CsvNode} from "./CsvTypes";
 import csv from 'csv-parse';
 import axios from 'axios';
 import * as d3 from "d3";
-import {LinesC} from "./TestGraph";
-import {SimulationNodeDatum, SimulationLinkDatum} from "d3-force";
+import {SimulationLinkDatum, SimulationNodeDatum} from "d3-force";
+import {DragBehavior} from 'd3-drag';
+import {Simulate} from "react-dom/test-utils";
+import ComposerDisplay from "./ComposerDisplay";
+import drag = Simulate.drag;
 
 interface State {
     nodes: CsvNode[],
-    links: CsvLink[]
+    links: CsvLink[],
+    selectedComposer: string | null
 }
 
 export class GraphC extends React.Component<{}, State> {
@@ -16,7 +20,8 @@ export class GraphC extends React.Component<{}, State> {
         super(p);
         this.state = {
             nodes: [],
-            links: []
+            links: [],
+            selectedComposer: null
         }
     }
 
@@ -77,12 +82,26 @@ export class GraphC extends React.Component<{}, State> {
         return nodeAccumulator;
     };
 
+    async getComposerSummary(composerName: string): Promise<string> {
+        const result = await axios
+            .get(`https://en.wikipedia.org/w/api.php?origin=*&action=query&format=json&list=search&utf8=1&srsearch=${composerName} composer&srprop&srqiprofile=classic&srlimit=1`, { method: "GET"});
+
+        const pageId = result.data.query.search[0].pageid as number;
+
+        const composerSummary = await axios
+            .get(`https://en.wikipedia.org/w/api.php?origin=*&format=json&action=query&prop=extracts&exintro&explaintext&redirects=1&pageids=${pageId}`);
+
+        return composerSummary.data.query.pages[pageId.toString()].extract as string;
+    }
+
     async initializeGraphState(): Promise<void> {
         const nodes: CsvNode[] = await this.getNodes();
         const links: CsvLink[] = await this.getLinks();
 
         interface DescriptiveNode extends SimulationNodeDatum {
-            id: string
+            id: string,
+            children: number,
+            composerName: string
         }
 
         const d3Nodes: DescriptiveNode[] = nodes.map((value, index) => {
@@ -92,7 +111,9 @@ export class GraphC extends React.Component<{}, State> {
           const asSimNode: DescriptiveNode = {
               id: value.id,
               x: asInt * 0.8 + 100 / 2,
-              y: index * 2 + 2 + 100 / 2
+              y: index * 2 + 2 + 100 / 2,
+              children: value.children,
+              composerName: value.name
           };
 
           return asSimNode;
@@ -103,32 +124,6 @@ export class GraphC extends React.Component<{}, State> {
             const sink: CsvNode | undefined = nodes.find((node) => node.id == value.sink);
 
             if (source && sink) {
-                const sourceIndex: number = nodes.indexOf(source);
-                const sinkIndex: number = nodes.indexOf(sink);
-
-                const sourceY = sourceIndex * 2 + 2 + 100 / 2;
-                const sinkY = sinkIndex * 2 + 2 + 100 / 2;
-
-                const sourceX = +(source.id.substr(1)) * 0.8 + 100 / 2;
-                const sinkX = +(sink.id.substr(1)) * 0.8 + 100 / 2;
-
-                const sourceAsSimNode: DescriptiveNode = {
-                    id: source.id,
-                    x: sourceX,
-                    y: sourceY
-                };
-
-                const sinkAsSimNode: DescriptiveNode = {
-                    id: sink.id,
-                    x: sinkX,
-                    y: sinkY
-                };
-
-                const asSimTuple: SimulationLinkDatum<DescriptiveNode> = {
-                    source: sourceAsSimNode,
-                    target: sinkAsSimNode
-                };
-
                 const o: SimulationLinkDatum<DescriptiveNode> = {
                     source: source.id,
                     target: sink.id
@@ -140,24 +135,6 @@ export class GraphC extends React.Component<{}, State> {
             }
         });
 
-        const ns = d3.select(this.ref)
-            .append("g")
-            .attr("class", "nodes")
-            .selectAll("circle")
-            .data(d3Nodes)
-            .enter()
-            .append("circle")
-            .attr("r", 5)
-            .attr("fill", "blue");
-
-        const ls =  d3.select(this.ref)
-            .append("g")
-            .attr("class", "links")
-            .selectAll("line")
-            .data(d3Links)
-            .enter().append("line")
-            .attr("stroke-width", 2)
-            .attr("stroke", "black");
 
         const linkForce = d3.forceLink(d3Links)
             .id((n) => {
@@ -168,32 +145,102 @@ export class GraphC extends React.Component<{}, State> {
             .nodes(d3Nodes)
             .force("charge_force", d3.forceManyBody())
             .force("center_force", d3.forceCenter(1800 / 2, 1800 / 2))
-            .force("links", linkForce)
-            .on("tick", () => {
-                ns
-                    .attr("cx", d => d.x as number)
-                    .attr("cy", d => d.y as number);
+            .force("links", linkForce);
 
-                ls
-                    .attr("x1", d => (d.source as SimulationNodeDatum).x as number)
-                    .attr("y1", d => (d.source as SimulationNodeDatum).y as number)
-                    .attr("x2", d => (d.target as SimulationNodeDatum).x as number)
-                    .attr("y2", d => (d.target as SimulationNodeDatum).y as number);
+        const dragEE = (d: unknown) => {
+            if (!d3.event.active) {
+                sim.alphaTarget(0);
+            }
+            const asN = d as {fx : number, fy: number, x: number, y: number};
+            asN.fx = asN.x;
+            asN.fy = asN.y;
+        };
+
+        const dragSE = (d: unknown) => {
+            if (!d3.event.active) {
+                sim.alphaTarget(0.3).restart();
+            }
+            const asN = d as {fx : number, fy: number, x: number, y: number};
+            asN.fx = asN.x;
+            asN.fy = asN.y;
+        };
+
+        const dragDE = (d: unknown) => {
+            const asN = d as {fx : number, fy: number};
+            asN.fx = d3.event.x;
+            asN.fy = d3.event.y;
+        };
+
+        const dragU = d3.drag()
+            .on("start", dragSE)
+            .on("drag", dragDE)
+            .on("end", dragEE);
+
+        const dragI = dragU as any as DragBehavior<SVGCircleElement, DescriptiveNode, unknown>;
+
+        const ns = d3.select(this.ref)
+            .append("g")
+            .attr("class", "nodes")
+            .selectAll("circle")
+            .data(d3Nodes)
+            .enter()
+            .append("circle")
+            .attr("r", c => Math.log(c.children) * 5 + 4)
+            .attr("fill", "blue")
+            .call(dragI)
+            .on("click", (x) => {
+                this.getComposerSummary(x.composerName).then((composerSummary) => {
+                    this.setState({selectedComposer: composerSummary})
+                })
             });
 
+        ns.append("title")
+            .text(x => x.composerName);
 
+        const ls =  d3.select(this.ref)
+            .append("g")
+            .attr("class", "links")
+            .selectAll("line")
+            .data(d3Links)
+            .enter().append("line")
+            .attr("stroke-width", 2)
+            .attr("stroke", "black");
 
+        sim.on("tick", () => {
+            ns
+                .attr("cx", d => d.x as number)
+                .attr("cy", d => d.y as number);
+
+            ls
+                .attr("x1", d => (d.source as SimulationNodeDatum).x as number)
+                .attr("y1", d => (d.source as SimulationNodeDatum).y as number)
+                .attr("x2", d => (d.target as SimulationNodeDatum).x as number)
+                .attr("y2", d => (d.target as SimulationNodeDatum).y as number);
+        });
     }
 
     async componentDidMount() {
         await this.initializeGraphState();
     }
 
+    renderSelectedComposer() {
+        if (this.state.selectedComposer === null) {
+            return null;
+        } else {
+            return (
+                <ComposerDisplay composerSummary={this.state.selectedComposer} />
+            );
+        }
+    }
+
     render() {
         return (
-            <svg className="container" ref={(ref: SVGSVGElement) => this.ref = ref}
-                 width={1800} height={1800}>
-            </svg>
+            <div>
+                {this.renderSelectedComposer()}
+                <svg className="container" ref={(ref: SVGSVGElement) => this.ref = ref}
+                     width={1800} height={1800}>
+                </svg>
+            </div>
         )
     }
 }
