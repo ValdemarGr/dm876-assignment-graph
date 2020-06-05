@@ -1,5 +1,5 @@
 import React from 'react';
-import {CsvLink, CsvNode} from "./CsvTypes";
+import {CsvLink, CsvNode, Metadata} from "./CsvTypes";
 import csv from 'csv-parse';
 import axios from 'axios';
 import * as d3 from "d3";
@@ -12,7 +12,9 @@ import drag = Simulate.drag;
 interface State {
     nodes: CsvNode[],
     links: CsvLink[],
-    selectedComposer: string | null
+    selectedComposer: string | null,
+    composerObject: CsvNode | null,
+    metadata: {[id: string]: Metadata}
 }
 
 export class GraphC extends React.Component<{}, State> {
@@ -21,11 +23,19 @@ export class GraphC extends React.Component<{}, State> {
         this.state = {
             nodes: [],
             links: [],
-            selectedComposer: null
+            metadata: {},
+            selectedComposer: null,
+            composerObject: null
         }
     }
 
     ref: SVGSVGElement = SVGSVGElement.prototype;
+
+    async getFiltered(): Promise<{[id: string]: Metadata}> {
+        const d = await axios.get("filtered.json");
+
+        return d.data;
+    }
 
     async getLinks(): Promise<CsvLink[]> {
         const source = 0;
@@ -94,9 +104,59 @@ export class GraphC extends React.Component<{}, State> {
         return composerSummary.data.query.pages[pageId.toString()].extract as string;
     }
 
+    const parseMetadataDate = (metadata: Metadata) => {
+        const pd = (new Date(metadata.born)).getFullYear();
+
+        if (isNaN(pd)) {
+            const regexp = /\d+/;
+            const firstMatch = (metadata.born.match(regexp) as RegExpMatchArray)[0];
+
+            return +firstMatch;
+        }
+
+        return pd;
+    };
+
     async initializeGraphState(): Promise<void> {
         const nodes: CsvNode[] = await this.getNodes();
         const links: CsvLink[] = await this.getLinks();
+        const metadata: {[id: string]: Metadata} = await this.getFiltered();
+
+        const dates = nodes.map(n => this.parseMetadataDate(metadata[n.id]));
+
+        const min = Math.min(...dates);
+        const max = Math.max(...dates);
+        const boundedMax = max - min;
+
+        const maxChildren = Math.max(...nodes.map(n => n.children));
+
+        //const sigmoid = (x: number) => Math.pow(Math.E, x) / (Math.pow(Math.E, x) + 1);
+
+        const redFromD = (d: DescriptiveNode) => {
+            //const normalized = d.children - (maxChildren / 2);
+
+            //return sigmoid(normalized) * 255;
+
+            return (Math.log(d.children)) / Math.log(maxChildren) * 255;
+        };
+
+        const getXOffset = (nodeId: string) => {
+            try {
+                return (this.parseMetadataDate(metadata[nodeId]) - min) / boundedMax * 1800;
+            } catch (e) {
+                return 0;
+            }
+        };
+
+        const boundY = (n: number) => {
+            if (n > 1750) {
+                return 1750;
+            } else if (n < 50) {
+                return 50;
+            } else {
+                return n;
+            }
+        };
 
         interface DescriptiveNode extends SimulationNodeDatum {
             id: string,
@@ -139,11 +199,13 @@ export class GraphC extends React.Component<{}, State> {
         const linkForce = d3.forceLink(d3Links)
             .id((n) => {
                 return (n as {id : string}).id;
-            });
+            }).distance(d => 400).strength(d => 0.5);
+
+        const genRadius = (d: DescriptiveNode) => Math.log(d.children) * 5 + 4;
 
         const sim = d3.forceSimulation()
             .nodes(d3Nodes)
-            .force("charge_force", d3.forceManyBody())
+            //.force("charge_force", d3.forceManyBody())
             .force("center_force", d3.forceCenter(1800 / 2, 1800 / 2))
             .force("links", linkForce);
 
@@ -178,25 +240,6 @@ export class GraphC extends React.Component<{}, State> {
 
         const dragI = dragU as any as DragBehavior<SVGCircleElement, DescriptiveNode, unknown>;
 
-        const ns = d3.select(this.ref)
-            .append("g")
-            .attr("class", "nodes")
-            .selectAll("circle")
-            .data(d3Nodes)
-            .enter()
-            .append("circle")
-            .attr("r", c => Math.log(c.children) * 5 + 4)
-            .attr("fill", "blue")
-            .call(dragI)
-            .on("click", (x) => {
-                this.getComposerSummary(x.composerName).then((composerSummary) => {
-                    this.setState({selectedComposer: composerSummary})
-                })
-            });
-
-        ns.append("title")
-            .text(x => x.composerName);
-
         const ls =  d3.select(this.ref)
             .append("g")
             .attr("class", "links")
@@ -204,19 +247,57 @@ export class GraphC extends React.Component<{}, State> {
             .data(d3Links)
             .enter().append("line")
             .attr("stroke-width", 2)
-            .attr("stroke", "black");
+            .attr("stroke", "black")
+            .attr("x1", d => getXOffset((d.source as any)["id"] as string))
+            .attr("x2", d => getXOffset((d.target as any)["id"] as string));
+
+        const ns = d3.select(this.ref)
+            .append("g")
+            .attr("class", "nodes")
+            .selectAll("circle")
+            .data(d3Nodes)
+            .enter()
+            .append("circle")
+            .attr("r", c => genRadius(c))
+            .attr("fill", d => `rgb(${redFromD(d)}, 0, ${255 - redFromD(d)})`)
+            .attr("cx", d => getXOffset(d.id))
+            .call(dragI)
+            .on("click", (x) => {
+                this.getComposerSummary(x.composerName).then((composerSummary) => {
+                    this.setState({selectedComposer: composerSummary, composerObject: nodes.find(d => d.id == x.id) as CsvNode, metadata: metadata})
+                })
+            });
+
+        ns.append("title")
+            .text(x => x.composerName);
 
         sim.on("tick", () => {
             ns
-                .attr("cx", d => d.x as number)
-                .attr("cy", d => d.y as number);
+                //.attr("cx", d => getXOffset(d.id))
+                .attr("cy", d => boundY(d.y as number));
 
             ls
-                .attr("x1", d => (d.source as SimulationNodeDatum).x as number)
-                .attr("y1", d => (d.source as SimulationNodeDatum).y as number)
-                .attr("x2", d => (d.target as SimulationNodeDatum).x as number)
-                .attr("y2", d => (d.target as SimulationNodeDatum).y as number);
+                //.attr("x1", d => getXOffset((d.source as any)["id"] as string))
+                .attr("y1", d => boundY((d.source as SimulationNodeDatum).y as number))
+                //.attr("x2", d => getXOffset((d.target as any)["id"] as string))
+                .attr("y2", d => boundY((d.target as SimulationNodeDatum).y as number));
         });
+    }
+
+    private showSubGraph(co: CsvNode) {
+        // Get all related edges
+        const asSource = this.state.links.filter(l => l.source == co.id).map(l => l.sink);
+        const asSink = this.state.links.filter(l => l.sink == co.id).map(l => l.source);
+
+        const allDates: number[] = asSource.concat(asSink).concat(co.id).map(l => this.parseMetadataDate(this.state.metadata[l]));
+
+        const min = Math.min(...allDates);
+        const max = Math.min(...allDates);
+        const boundedMax = max - min;
+
+
+
+        return undefined;
     }
 
     async componentDidMount() {
@@ -224,12 +305,13 @@ export class GraphC extends React.Component<{}, State> {
     }
 
     renderSelectedComposer() {
-        if (this.state.selectedComposer === null) {
+        if (this.state.composerObject === null) {
             return null;
         } else {
-            return (
-                <ComposerDisplay composerSummary={this.state.selectedComposer} />
-            );
+            return (<div>
+                <ComposerDisplay composerSummary={this.state.selectedComposer} realName={this.state.composerObject.name} /><br/>
+                <button type={"button"} onClick={this.showSubGraph(this.state.composerObject)}>Click me</button>
+            </div>);
         }
     }
 
