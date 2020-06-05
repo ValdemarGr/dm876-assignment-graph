@@ -104,7 +104,7 @@ export class GraphC extends React.Component<{}, State> {
         return composerSummary.data.query.pages[pageId.toString()].extract as string;
     }
 
-    const parseMetadataDate = (metadata: Metadata) => {
+    private parseMetadataDate = (metadata: Metadata) => {
         const pd = (new Date(metadata.born)).getFullYear();
 
         if (isNaN(pd)) {
