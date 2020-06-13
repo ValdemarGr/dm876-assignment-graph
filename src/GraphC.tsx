@@ -8,13 +8,17 @@ import {DragBehavior} from 'd3-drag';
 import {Simulate} from "react-dom/test-utils";
 import ComposerDisplay from "./ComposerDisplay";
 import drag = Simulate.drag;
+import {DescriptiveNode} from "./DescriptiveNode";
+import {prepareRenderingProps} from "./GraphRendering";
+import {SubGraphC, SubgraphProps} from "./SubGraphC";
 
 interface State {
     nodes: CsvNode[],
     links: CsvLink[],
     selectedComposer: string | null,
     composerObject: CsvNode | null,
-    metadata: {[id: string]: Metadata}
+    metadata: {[id: string]: Metadata},
+    subgraphProps: SubgraphProps | null
 }
 
 export class GraphC extends React.Component<{}, State> {
@@ -25,11 +29,15 @@ export class GraphC extends React.Component<{}, State> {
             links: [],
             metadata: {},
             selectedComposer: null,
-            composerObject: null
+            composerObject: null,
+            subgraphProps: null
         }
     }
 
     ref: SVGSVGElement = SVGSVGElement.prototype;
+
+    gWidth = 1500;
+    gHeight = 1000;
 
     async getFiltered(): Promise<{[id: string]: Metadata}> {
         const d = await axios.get("filtered.json");
@@ -92,7 +100,7 @@ export class GraphC extends React.Component<{}, State> {
         return nodeAccumulator;
     };
 
-    async getComposerSummary(composerName: string): Promise<string> {
+    async fetchWikipediaResults(composerName: string): Promise<string> {
         const result = await axios
             .get(`https://en.wikipedia.org/w/api.php?origin=*&action=query&format=json&list=search&utf8=1&srsearch=${composerName} composer&srprop&srqiprofile=classic&srlimit=1`, { method: "GET"});
 
@@ -104,109 +112,36 @@ export class GraphC extends React.Component<{}, State> {
         return composerSummary.data.query.pages[pageId.toString()].extract as string;
     }
 
-    private parseMetadataDate = (metadata: Metadata) => {
-        const pd = (new Date(metadata.born)).getFullYear();
-
-        if (isNaN(pd)) {
-            const regexp = /\d+/;
-            const firstMatch = (metadata.born.match(regexp) as RegExpMatchArray)[0];
-
-            return +firstMatch;
+    async getComposerSummary(composerName: string): Promise<string> {
+        try {
+            return await this.fetchWikipediaResults(composerName);
+        } catch (e) {
+            return "";
         }
+    }
 
-        return pd;
-    };
-
-    async initializeGraphState(): Promise<void> {
-        const nodes: CsvNode[] = await this.getNodes();
-        const links: CsvLink[] = await this.getLinks();
-        const metadata: {[id: string]: Metadata} = await this.getFiltered();
-
-        const dates = nodes.map(n => this.parseMetadataDate(metadata[n.id]));
-
-        const min = Math.min(...dates);
-        const max = Math.max(...dates);
-        const boundedMax = max - min;
-
-        const maxChildren = Math.max(...nodes.map(n => n.children));
-
-        //const sigmoid = (x: number) => Math.pow(Math.E, x) / (Math.pow(Math.E, x) + 1);
-
-        const redFromD = (d: DescriptiveNode) => {
-            //const normalized = d.children - (maxChildren / 2);
-
-            //return sigmoid(normalized) * 255;
-
-            return (Math.log(d.children)) / Math.log(maxChildren) * 255;
-        };
-
-        const getXOffset = (nodeId: string) => {
-            try {
-                return (this.parseMetadataDate(metadata[nodeId]) - min) / boundedMax * 1800;
-            } catch (e) {
-                return 0;
-            }
-        };
-
-        const boundY = (n: number) => {
-            if (n > 1750) {
-                return 1750;
-            } else if (n < 50) {
-                return 50;
-            } else {
-                return n;
-            }
-        };
-
-        interface DescriptiveNode extends SimulationNodeDatum {
-            id: string,
-            children: number,
-            composerName: string
-        }
-
-        const d3Nodes: DescriptiveNode[] = nodes.map((value, index) => {
-          const x = value.id.substr(1);
-          const asInt: number = +x;
-
-          const asSimNode: DescriptiveNode = {
-              id: value.id,
-              x: asInt * 0.8 + 100 / 2,
-              y: index * 2 + 2 + 100 / 2,
-              children: value.children,
-              composerName: value.name
-          };
-
-          return asSimNode;
+    initializeGraphState(nodes: CsvNode[], links: CsvLink[], metadata: {[id: string]: Metadata}): void {
+        const rp = prepareRenderingProps({
+            width: this.gWidth,
+            nodes: nodes,
+            metadata: metadata,
+            links: links,
+            height: this.gHeight
         });
 
-        const d3Links: SimulationLinkDatum<DescriptiveNode>[] = links.flatMap((value) => {
-            const source: CsvNode | undefined = nodes.find((node) => node.id == value.source);
-            const sink: CsvNode | undefined = nodes.find((node) => node.id == value.sink);
+        const redFromD = (d: DescriptiveNode) => (Math.log(d.children)) / Math.log(rp.maxChildren) * 255;
 
-            if (source && sink) {
-                const o: SimulationLinkDatum<DescriptiveNode> = {
-                    source: source.id,
-                    target: sink.id
-                };
-
-                return Array.of<SimulationLinkDatum<DescriptiveNode>>(o);
-            } else {
-                return Array.of<SimulationLinkDatum<DescriptiveNode>>();
-            }
-        });
-
-
-        const linkForce = d3.forceLink(d3Links)
+        const linkForce = d3.forceLink(rp.describedLinks)
             .id((n) => {
                 return (n as {id : string}).id;
-            }).distance(d => 400).strength(d => 0.5);
+            }).distance(d => 200).strength(d => 0.5);
 
-        const genRadius = (d: DescriptiveNode) => Math.log(d.children) * 5 + 4;
+        const genRadius = (d: DescriptiveNode) => Math.log(d.children) * 3 + 4;
 
         const sim = d3.forceSimulation()
-            .nodes(d3Nodes)
+            .nodes(rp.describedNodes)
             //.force("charge_force", d3.forceManyBody())
-            .force("center_force", d3.forceCenter(1800 / 2, 1800 / 2))
+            .force("center_force", d3.forceCenter(rp.width / 2, rp.height / 2))
             .force("links", linkForce);
 
         const dragEE = (d: unknown) => {
@@ -244,28 +179,28 @@ export class GraphC extends React.Component<{}, State> {
             .append("g")
             .attr("class", "links")
             .selectAll("line")
-            .data(d3Links)
+            .data(rp.describedLinks)
             .enter().append("line")
             .attr("stroke-width", 2)
             .attr("stroke", "black")
-            .attr("x1", d => getXOffset((d.source as any)["id"] as string))
-            .attr("x2", d => getXOffset((d.target as any)["id"] as string));
+            .attr("x1", d => rp.xOffset((d.source as any)["id"] as string))
+            .attr("x2", d => rp.xOffset((d.target as any)["id"] as string));
 
         const ns = d3.select(this.ref)
             .append("g")
             .attr("class", "nodes")
             .selectAll("circle")
-            .data(d3Nodes)
+            .data(rp.describedNodes)
             .enter()
             .append("circle")
             .attr("r", c => genRadius(c))
             .attr("fill", d => `rgb(${redFromD(d)}, 0, ${255 - redFromD(d)})`)
-            .attr("cx", d => getXOffset(d.id))
+            .attr("cx", d => rp.xOffset(d.id))
             .call(dragI)
             .on("click", (x) => {
                 this.getComposerSummary(x.composerName).then((composerSummary) => {
                     this.setState({selectedComposer: composerSummary, composerObject: nodes.find(d => d.id == x.id) as CsvNode, metadata: metadata})
-                })
+                });
             });
 
         ns.append("title")
@@ -274,43 +209,107 @@ export class GraphC extends React.Component<{}, State> {
         sim.on("tick", () => {
             ns
                 //.attr("cx", d => getXOffset(d.id))
-                .attr("cy", d => boundY(d.y as number));
+                .attr("cy", d => rp.yBound(d.y as number));
 
             ls
                 //.attr("x1", d => getXOffset((d.source as any)["id"] as string))
-                .attr("y1", d => boundY((d.source as SimulationNodeDatum).y as number))
+                .attr("y1", d => rp.yBound((d.source as SimulationNodeDatum).y as number))
                 //.attr("x2", d => getXOffset((d.target as any)["id"] as string))
-                .attr("y2", d => boundY((d.target as SimulationNodeDatum).y as number));
+                .attr("y2", d => rp.yBound((d.target as SimulationNodeDatum).y as number));
+        });
+
+        this.setState({
+            links: links,
+            nodes: nodes,
+            metadata: metadata
         });
     }
 
-    private showSubGraph(co: CsvNode) {
-        // Get all related edges
-        const asSource = this.state.links.filter(l => l.source == co.id).map(l => l.sink);
-        const asSink = this.state.links.filter(l => l.sink == co.id).map(l => l.source);
-
-        const allDates: number[] = asSource.concat(asSink).concat(co.id).map(l => this.parseMetadataDate(this.state.metadata[l]));
-
-        const min = Math.min(...allDates);
-        const max = Math.min(...allDates);
-        const boundedMax = max - min;
-
-
-
-        return undefined;
-    }
-
     async componentDidMount() {
-        await this.initializeGraphState();
+        const nodes: CsvNode[] = await this.getNodes();
+        const links: CsvLink[] = await this.getLinks();
+        const metadata: {[id: string]: Metadata} = await this.getFiltered();
+
+        this.initializeGraphState(nodes, links, metadata);
     }
+
+    private async prepSubgraph(centerComposer: CsvNode, extraNodes: CsvNode[]) {
+        const nodeLookup: Map<string, CsvNode> = new Map(this.state.nodes.map((n: CsvNode) => [n.id, n]));
+
+        // Find all immediate neighbours
+        const neighbours = this.state.links.flatMap((n) => {
+            if (n.source === centerComposer.id) {
+                return Array.of<CsvNode>(nodeLookup.get(n.sink) as CsvNode);
+            } else if (n.sink === centerComposer.id) {
+                return Array.of<CsvNode>(nodeLookup.get(n.source) as CsvNode);
+            } else {
+                return Array.of<CsvNode>();
+            }
+        })
+            .concat(extraNodes).concat(centerComposer)
+            .filter((item, i, ar) => ar.indexOf(item) === i);
+
+        const subgraphProps: SubgraphProps = {
+            center: centerComposer,
+            subgraphNodes: neighbours,
+            links: this.state.links,
+            metadata: this.state.metadata,
+            rebuild: async (newCenter, extra) => await this.prepSubgraph(newCenter, extra),
+            setComposer: async (d: DescriptiveNode) => {
+                await this.getComposerSummary(d.composerName).then(async (composerSummary) => {
+                    await this.setState({selectedComposer: composerSummary, composerObject: this.state.nodes.find(x => x.id == d.id) as CsvNode});
+                });
+            }
+        };
+
+        await this.setState({
+            subgraphProps: null
+        });
+        await this.setState({
+           subgraphProps: subgraphProps
+        });
+    };
 
     renderSelectedComposer() {
         if (this.state.composerObject === null) {
             return null;
         } else {
+            const composer: CsvNode = this.state.composerObject;
+
             return (<div>
-                <ComposerDisplay composerSummary={this.state.selectedComposer} realName={this.state.composerObject.name} /><br/>
-                <button type={"button"} onClick={this.showSubGraph(this.state.composerObject)}>Click me</button>
+                <ComposerDisplay node={composer} composerSummary={this.state.selectedComposer} realName={this.state.composerObject.name} /><br/>
+                <button type={"button"} onClick={async (e) => await this.prepSubgraph(composer, [])}>Open subgraph</button>
+                <button type={"button"} onClick={async (e) => await this.setState({composerObject: null, selectedComposer: null})}>Close summary</button>
+            </div>);
+        }
+    }
+
+    private renderThis() {
+        return (<svg className="container" ref={(ref: SVGSVGElement) => this.ref = ref}
+                     width={this.gWidth} height={this.gHeight}>
+        </svg>);
+    }
+
+    private renderSubgraph(p: SubgraphProps) {
+        return (<SubGraphC
+            center={p.center}
+            subgraphNodes={p.subgraphNodes}
+            setComposer={p.setComposer}
+            rebuild={p.rebuild}
+            links={p.links}
+            metadata={p.metadata} />);
+    }
+
+    private conditionallyRender() {
+        if (this.state.subgraphProps === null) {
+            return this.renderThis();
+        } else {
+            return (<div>
+                <button type={"button"} onClick={async (e) => {
+                    await this.setState({subgraphProps: null});
+                    await this.initializeGraphState(this.state.nodes, this.state.links, this.state.metadata);
+                }}>Back</button><br/>
+                {this.renderSubgraph(this.state.subgraphProps)}
             </div>);
         }
     }
@@ -319,9 +318,7 @@ export class GraphC extends React.Component<{}, State> {
         return (
             <div>
                 {this.renderSelectedComposer()}
-                <svg className="container" ref={(ref: SVGSVGElement) => this.ref = ref}
-                     width={1800} height={1800}>
-                </svg>
+                {this.conditionallyRender()}
             </div>
         )
     }
