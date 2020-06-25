@@ -11,6 +11,7 @@ import drag = Simulate.drag;
 import {DescriptiveNode} from "./DescriptiveNode";
 import {prepareRenderingProps} from "./GraphRendering";
 import {SubGraphC, SubgraphProps} from "./SubGraphC";
+import {CookieStorage} from "cookie-storage";
 
 interface State {
     nodes: CsvNode[],
@@ -234,6 +235,9 @@ export class GraphC extends React.Component<{}, State> {
     }
 
     private async prepSubgraph(centerComposer: CsvNode, extraNodes: CsvNode[]) {
+        const cs = new CookieStorage();
+        cs.setItem("current_node_id", centerComposer.id);
+
         const nodeLookup: Map<string, CsvNode> = new Map(this.state.nodes.map((n: CsvNode) => [n.id, n]));
 
         // Find all immediate neighbours
@@ -279,7 +283,9 @@ export class GraphC extends React.Component<{}, State> {
             return (<div>
                 <ComposerDisplay node={composer} composerSummary={this.state.selectedComposer} realName={this.state.composerObject.name} /><br/>
                 <button type={"button"} onClick={async (e) => await this.prepSubgraph(composer, [])}>Open subgraph</button>
-                <button type={"button"} onClick={async (e) => await this.setState({composerObject: null, selectedComposer: null})}>Close summary</button>
+                <button type={"button"} onClick={async (e) => {
+                    return await this.setState({composerObject: null, selectedComposer: null})
+                }}>Close summary</button>
             </div>);
         }
     }
@@ -306,6 +312,8 @@ export class GraphC extends React.Component<{}, State> {
         } else {
             return (<div>
                 <button type={"button"} onClick={async (e) => {
+                    const cs = new CookieStorage();
+                    cs.removeItem("current_node_id");
                     await this.setState({subgraphProps: null});
                     await this.initializeGraphState(this.state.nodes, this.state.links, this.state.metadata);
                 }}>Back</button><br/>

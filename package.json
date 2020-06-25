@@ -24,7 +24,8 @@
     "d3": "^5.7.2",
     "csv-parse": "^4.8.8",
     "@types/csv-parse": "^1.2.2",
-    "axios": "^0.19.2"
+    "axios": "^0.19.2",
+    "cookie-storage": "^6.0.0"
   },
   "scripts": {
     "start": "webpack-dev-server -w --hot --mode development",

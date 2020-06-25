@@ -10,6 +10,7 @@ import ComposerDisplay from "./ComposerDisplay";
 import drag = Simulate.drag;
 import {prepareRenderingProps} from "./GraphRendering";
 import {DescriptiveNode} from "./DescriptiveNode";
+import { CookieStorage } from 'cookie-storage';
 
 export interface SubgraphProps {
     center: CsvNode,
@@ -114,6 +115,7 @@ export class SubGraphC extends React.Component<SubgraphProps, {}> {
             .call(dragI)
             .on("click", async (x) => {
                 const thisNode: CsvNode = this.props.subgraphNodes.find((n) => n.id === x.id) as any as CsvNode;
+
                 this.ref.remove();
                 this.ref = SVGSVGElement.prototype;
 
